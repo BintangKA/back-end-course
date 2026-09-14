@@ -1,0 +1,144 @@
+import { Response, Request } from "express";
+import * as Yup from "yup";
+import UserModel from "../models/user.model";
+import { encrypt } from "../utils/encryption";
+import { generateToken } from "../utils/jwt";
+import { IReqUser } from "../middlewares/auth.middleware";
+
+type TRegister = {
+  fullName: string;
+  username: string;
+  email: string;
+  password: string;
+  confirmPassword: string;
+};
+
+type TLogin = {
+  identifier: string;
+  password: string;
+};
+
+const registerValidataSchema = Yup.object({
+  fullName: Yup.string().required(),
+  username: Yup.string().required(),
+  email: Yup.string().email().required(),
+  password: Yup.string().required(),
+  confirmPassword: Yup.string()
+    .required()
+    .oneOf([Yup.ref("password")], "Password not match"),
+});
+
+const loginValidationSchema = Yup.object({
+  identifier: Yup.string().required("Identifier is required"),
+  password: Yup.string().required("Password is required"),
+});
+
+export default {
+  async register(req: Request, res: Response) {
+    const { fullName, username, email, password, confirmPassword } =
+      req.body as TRegister;
+
+    try {
+      await registerValidataSchema.validate({
+        fullName,
+        username,
+        email,
+        password,
+        confirmPassword,
+      });
+
+      const result = await UserModel.create({
+        fullName,
+        username,
+        email,
+        password,
+      });
+
+      return res.status(200).json({
+        message: "Success Registration",
+        data: result,
+      });
+    } catch (error) {
+      const err = error as Error;
+
+      return res.status(400).json({
+        message: err.message,
+        data: null,
+      });
+    }
+  },
+
+  async login(req: Request, res: Response) {
+    const { identifier, password } = req.body as TLogin;
+
+    try {
+      await loginValidationSchema.validate({
+        identifier,
+        password,
+      });
+
+      const userByIdentifier = await UserModel.findOne({
+        $or: [
+          {
+            email: identifier,
+          },
+          {
+            username: identifier,
+          },
+        ],
+      });
+
+      if (!userByIdentifier) {
+        return res.status(403).json({
+          message: "User Not Found",
+          data: null,
+        });
+      }
+
+      const validatePassword: boolean =
+        encrypt(password) === userByIdentifier.password;
+
+      if (!validatePassword) {
+        return res.status(403).json({
+          message: "Password or Email is wrong",
+          data: null,
+        });
+      }
+
+      const token = generateToken({
+        id: userByIdentifier._id,
+        role: userByIdentifier.role,
+      });
+
+      return res.status(200).json({
+        message: "Login Success",
+        data: token,
+      });
+    } catch (error) {
+      const err = error as Error;
+
+      return res.status(400).json({
+        message: err.message,
+        data: null,
+      });
+    }
+  },
+
+  async me(req: IReqUser, res: Response) {
+    try {
+      const user = req.user;
+      const result = await UserModel.findById(user?.id);
+      return res.status(200).json({
+        message: "Success get user profile",
+        data: result,
+      });
+    } catch (error) {
+      const err = error as Error;
+
+      return res.status(400).json({
+        message: err.message,
+        data: null,
+      });
+    }
+  },
+};
